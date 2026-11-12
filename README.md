@@ -1,5 +1,13 @@
 # RwhPredictor app
 
+屋面雨水回收（RWH）经济性预测 App。运行时仅依赖 `flet`，随机森林推理用标准库完成。
+
+首次运行或模型更新后，先在电脑端构建资源：
+
+```bash
+python build_assets.py
+```
+
 ## Run the app
 
 ### uv

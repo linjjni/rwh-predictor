@@ -8,13 +8,7 @@ authors = [
     { name = "Flet developer", email = "you@example.com" }
 ]
 dependencies = [
-    "flet[cli]>=1.1.2",
-    "flet-cli>=1.1.2",
-    "scikit-learn",
-    "joblib",
-    "pandas",
-    "numpy",
-    "openpyxl",
+    "flet==1.1.2",
 ]
 
 [dependency-groups]
@@ -23,6 +17,11 @@ dev = [
     "pytest-asyncio",
 ]
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
 [tool.flet]
 org = "com.rwh"
 product = "RWH Predictor"
@@ -30,5 +29,4 @@ company = "RWH"
 copyright = "Copyright (C) 2026 RWH"
 
 [tool.flet.app]
-path = "."
-module = "main"
+path = "src"

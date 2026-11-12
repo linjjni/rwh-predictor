@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
-"""RWH Predictor —— 屋面雨水回收经济性预测 App（Flet 跨平台）。"""
+"""RWH Predictor —— 屋面雨水回收经济性预测 App（Flet 跨平台，纯标准库推理）。"""
 import os
-import joblib
-import numpy as np
-import pandas as pd
+import json
+import math
 import flet as ft
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 
 APP_NAME = "RWH Predictor"
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -19,52 +16,54 @@ def _asset(name):
     return os.path.join(_HERE, "assets", name)
 
 
-# ============ 1. 加载模型与历史数据 ============
-bundle = joblib.load(_asset("rf_bcr_model.joblib"))
-model, features = bundle["model"], bundle["features"]
+# ============ 1. 加载模型资源（纯 JSON，无第三方科学计算依赖） ============
+with open(_asset("rf_trees.json"), encoding="utf-8") as f:
+    DATA = json.load(f)
 
-df = pd.read_excel(_asset("clean_data.xlsx"))
-X = df[features].astype(float)
-y = df["BCR"].astype(float)
-
-# 与训练完全相同的划分：3:1，random_state=42（用于校验指标）
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.25, random_state=42
-)
-_test_pred = model.predict(X_test)
-METRICS = {
-    "r2": r2_score(y_test, _test_pred),
-    "mae": mean_absolute_error(y_test, _test_pred),
-    "rmse": float(np.sqrt(mean_squared_error(y_test, _test_pred))),
-}
-
-STATS = {
-    "min": X.min().to_dict(),
-    "max": X.max().to_dict(),
-    "p1": X.quantile(0.01).to_dict(),
-    "p99": X.quantile(0.99).to_dict(),
-    "mean": X.mean().to_dict(),
-    "std": X.std().replace(0, 1).to_dict(),
-}
-HIST_X = X.values.tolist()
-HIST_Y = y.values.tolist()
-
-DEFAULTS = {
-    "P 水价": 0.45, "R 降雨量": 1700, "CV 变异系数": 1.2,
-    "CA 汇水面积": 800, "BA 总建筑面积": 6000, "N 人数": 120,
-    "D 需水量": 12, "H 楼高": 18, "T 水箱容积": 40,
-    "L 项目寿命": 30, "E 电价": 0.10, "Dr 贴现率": 4.5,
-}
+FEATURES = DATA["features"]
+TREES = DATA["trees"]
+STATS = DATA["stats"]
+DEFAULTS = DATA["defaults"]
+HIST = DATA["history"]
+TEST = DATA["test"]
 
 
-# ============ 2. 推理逻辑 ============
-def predict_bcr(x):
-    return float(model.predict([x])[0])
+# ============ 2. 随机森林推理（树遍历，各树叶子值平均） ============
+def tree_predict(t, x):
+    n = 0
+    while t["f"][n] != -2:
+        n = t["l"][n] if x[t["f"][n]] <= t["t"][n] else t["r"][n]
+    return t["v"][n]
+
+
+def rf_predict(x):
+    total = 0.0
+    for t in TREES:
+        total += tree_predict(t, x)
+    return total / len(TREES)
+
+
+def calc_metrics(yt, yp):
+    n = len(yt)
+    ym = sum(yt) / n
+    sse = sae = sst = 0.0
+    for a, b in zip(yt, yp):
+        sse += (a - b) ** 2
+        sae += abs(a - b)
+        sst += (a - ym) ** 2
+    return {
+        "r2": 1 - sse / sst,
+        "mae": sae / n,
+        "rmse": math.sqrt(sse / n),
+    }
+
+
+METRICS = calc_metrics(TEST["y"], [rf_predict(row) for row in TEST["X"]])
 
 
 def extrapolation_warnings(x):
     bad = []
-    for i, f in enumerate(features):
+    for i, f in enumerate(FEATURES):
         v = x[i]
         if v < STATS["p1"][f] or v > STATS["p99"][f]:
             bad.append(f"{f}={v:g}")
@@ -72,16 +71,15 @@ def extrapolation_warnings(x):
 
 
 def find_similar(x, k=3):
-    mean = [STATS["mean"][f] for f in features]
-    std = [STATS["std"][f] for f in features]
+    mean = [STATS["mean"][f] for f in FEATURES]
+    std = [STATS["std"][f] for f in FEATURES]
     zx = [(v - mean[j]) / std[j] for j, v in enumerate(x)]
     dists = []
-    for i, row in enumerate(HIST_X):
-        d = 0.0
-        for j in range(len(features)):
-            z = (row[j] - mean[j]) / std[j]
-            d += (z - zx[j]) ** 2
-        dists.append((float(np.sqrt(d)), HIST_Y[i], row))
+    for i, row in enumerate(HIST["X"]):
+        d = math.sqrt(
+            sum(((row[j] - mean[j]) / std[j] - zx[j]) ** 2 for j in range(len(FEATURES)))
+        )
+        dists.append((d, HIST["y"][i], row))
     dists.sort(key=lambda r: r[0])
     return dists[:k]
 
@@ -95,7 +93,7 @@ def main(page: ft.Page):
 
     fields = []
     input_rows = []
-    for i, f in enumerate(features):
+    for i, f in enumerate(FEATURES):
         tf = ft.TextField(
             label=f,
             value=str(DEFAULTS[f]),
@@ -122,7 +120,7 @@ def main(page: ft.Page):
     def render_similar(x):
         similar_column.controls.clear()
         for rank, (d, bcr, row) in enumerate(find_similar(x, 3), start=1):
-            summary = "，".join(f"{features[j]} {row[j]:g}" for j in range(4))
+            summary = "，".join(f"{FEATURES[j]} {row[j]:g}" for j in range(4))
             similar_column.controls.append(
                 ft.Row([
                     ft.Text(f"#{rank}", weight=ft.FontWeight.W_600),
@@ -145,7 +143,7 @@ def main(page: ft.Page):
             page.update()
             return
 
-        bcr = predict_bcr(x)
+        bcr = rf_predict(x)
         bcr_text.value = f"{bcr:.4f}"
         feasible = bcr >= 1
         verdict.content.value = "经济可行" if feasible else "不可行"
@@ -183,7 +181,7 @@ def main(page: ft.Page):
             bcr_text, verdict, warn_text,
         ], spacing=10), padding=16)),
         ft.Card(content=ft.Container(content=ft.Column([
-            ft.Text("测试集校验（3:1，random_state=42）",
+            ft.Text("测试集校验（3:1，random_state=42，App 内重跑）",
                     size=15, weight=ft.FontWeight.W_600),
             metric_cells,
         ], spacing=10), padding=16)),
