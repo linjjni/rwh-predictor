@@ -8,11 +8,12 @@ authors = [
     { name = "Flet developer", email = "you@example.com" }
 ]
 dependencies = [
-    "flet[cli]==1.1.2",
+    "flet==1.1.2",
 ]
 
 [dependency-groups]
 dev = [
+    "flet-cli==1.1.2",
     "pytest",
     "pytest-asyncio",
 ]
